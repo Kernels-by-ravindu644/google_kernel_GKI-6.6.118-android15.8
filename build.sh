@@ -63,7 +63,7 @@ export BUILD_OPTIONS=(
 
 build_kernel(){
     # make default configuration.
-    make "${BUILD_OPTIONS[@]}" gki_defconfig custom.config || \
+    make "${BUILD_OPTIONS[@]}" gki_defconfig custom.config droidspaces.config || \
         die "Failed to generate the kernel configuration."
 
     # configure the kernel

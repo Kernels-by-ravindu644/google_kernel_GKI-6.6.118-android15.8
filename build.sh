@@ -48,7 +48,7 @@ export BUILD_OPTIONS=(
 
 build_kernel(){
     # make default configuration.
-    make "${BUILD_OPTIONS[@]}" gki_defconfig
+    make "${BUILD_OPTIONS[@]}" gki_defconfig custom.config
 
     # configure the kernel
     #make "${BUILD_OPTIONS[@]}" menuconfig

@@ -31,6 +31,13 @@ fi
 rm -rf "${SCRIPT_DIR}/"{out,dist} && \
     mkdir -p "${SCRIPT_DIR}/"{out,dist}
 
+# generate localversion -- kbuild doesn't know the KMI tag, so write it here:
+#   6.6.118-android15-8-ravindu644-<sha>-4k
+KMI="$(sed -n 's/^BRANCH=\([^-]*\).*/\1/p' build.config.common)-$(sed -n 's/^KMI_GENERATION=//p' build.config.common)"
+LOCALVERSION_SUFFIX="-${KMI}-ravindu644-$(git log -1 --pretty=%h)"
+printf '%s' "${LOCALVERSION_SUFFIX}" > "${SCRIPT_DIR}/out/localversion"
+export LOCALVERSION=""   # keeps setlocalversion from appending a '+'
+
 # export toolchain paths
 export PATH="${HOME}/toolchains/clang-r510928/bin:${PATH}"
 

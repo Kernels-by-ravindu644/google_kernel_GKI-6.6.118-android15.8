@@ -7,7 +7,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(dirname $(readlink -fq "$0"))"
+MAGISKBOOT="${SCRIPT_DIR}/tools/magiskboot"
+BOOTIMG="${SCRIPT_DIR}/prebuilts/boot.img"
 cd "${SCRIPT_DIR}"
+
+die(){ echo -e "\nError: $*" >&2 ; exit 1 ; }
+
+# prebuilts this script uses only support x86_64 linux
+[ "$(uname -s)" = "Linux" ] && [ "$(uname -m)" = "x86_64" ] || \
+    die "This script only runs on x86_64 Linux."
 
 KERNEL_VERSION="$(make kernelversion 2>/dev/null)"
 
@@ -55,17 +63,45 @@ export BUILD_OPTIONS=(
 
 build_kernel(){
     # make default configuration.
-    make "${BUILD_OPTIONS[@]}" gki_defconfig custom.config
+    make "${BUILD_OPTIONS[@]}" gki_defconfig custom.config || \
+        die "Failed to generate the kernel configuration."
 
     # configure the kernel
     #make "${BUILD_OPTIONS[@]}" menuconfig
 
     # build the kernel
-    make "${BUILD_OPTIONS[@]}"
+    make "${BUILD_OPTIONS[@]}" || die "Kernel build failed."
 
     # copy the built kernel to the dist directory
+    [ -f "${SCRIPT_DIR}/out/arch/arm64/boot/Image" ] || die "Build finished but no Image was produced."
     cp "${SCRIPT_DIR}/out/arch/arm64/boot/Image" "${SCRIPT_DIR}/dist"
+
+    RELEASE="$(cat "${SCRIPT_DIR}/out/include/config/kernel.release")"
+    echo -e "\nKernel release: ${RELEASE}\n"
+    [ "${RELEASE}" = "${KERNEL_VERSION}${LOCALVERSION_SUFFIX}-4k" ] || \
+        die "Unexpected release string -- the localversion setup is broken."
+}
+
+pack_bootimg(){
+    [ -x "${MAGISKBOOT}" ] || die "magiskboot is missing or not executable: ${MAGISKBOOT}"
+    [ -f "${BOOTIMG}" ] || die "Prebuilt boot image not found: ${BOOTIMG}"
+    [ -f "${SCRIPT_DIR}/dist/Image" ] || die "dist/Image not found. Build the kernel first."
+
+    # unpack/repack in a scratch dir so leftovers never pollute dist/
+    local workdir="${SCRIPT_DIR}/out/bootimg"
+    rm -rf "${workdir}" && mkdir -p "${workdir}"
+    cd "${workdir}"
+
+    "${MAGISKBOOT}" unpack "${BOOTIMG}" || die "Failed to unpack ${BOOTIMG}"
+    cp "${SCRIPT_DIR}/dist/Image" kernel
+    "${MAGISKBOOT}" repack "${BOOTIMG}" || die "Failed to repack ${BOOTIMG}"
+    [ -f new-boot.img ] || die "magiskboot did not produce new-boot.img"
+    mv new-boot.img "${SCRIPT_DIR}/dist/boot.img"
+
+    cd "${SCRIPT_DIR}" && rm -rf "${workdir}"
 }
 
 echo "Building kernel..." && \
-    build_kernel
+    build_kernel && \
+    echo "Packing boot image..." && \
+    pack_bootimg

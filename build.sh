@@ -69,7 +69,7 @@ build_kernel(){
     # configure the kernel
     #make "${BUILD_OPTIONS[@]}" menuconfig
 
-    # build the kernel
+    # build the kernel (Image + all =m modules, e.g. the rtl8821au Wi-Fi driver)
     make "${BUILD_OPTIONS[@]}" || die "Kernel build failed."
 
     # copy the built kernel to the dist directory
@@ -80,6 +80,16 @@ build_kernel(){
     echo -e "\nKernel release: ${RELEASE}\n"
     [ "${RELEASE}" = "${KERNEL_VERSION}${LOCALVERSION_SUFFIX}-4k" ] || \
         die "Unexpected release string -- the localversion setup is broken."
+
+    # install modules (signed + stripped) into dist/modules with depmod metadata,
+    # so `modprobe -d dist/modules 8821au` resolves the cfg80211 dependency.
+    rm -rf "${SCRIPT_DIR}/dist/modules"
+    make "${BUILD_OPTIONS[@]}" INSTALL_MOD_PATH="${SCRIPT_DIR}/dist/modules" \
+        INSTALL_MOD_STRIP=1 modules_install || die "modules_install failed."
+    find "${SCRIPT_DIR}/dist/modules" -name '8821au.ko' | grep -q . || \
+        die "Build finished but 8821au.ko was not produced."
+    echo -e "\nModules staged under dist/modules:"
+    find "${SCRIPT_DIR}/dist/modules" -name '*.ko' -printf '  %P\n'
 }
 
 pack_bootimg(){

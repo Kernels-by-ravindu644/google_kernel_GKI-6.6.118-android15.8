@@ -33,18 +33,22 @@ ccflags-y += -DCONFIG_LED_CONTROL
 ccflags-y += -DCONFIG_SW_LED -DCONFIG_RTW_SW_LED
 ccflags-y += -DCONFIG_LED_ENABLE
 
-# gcc-12
-ccflags-y += -Wno-address
-ccflags-y += -Wframe-larger-than=1648
-ccflags-y += -Wno-cast-function-type
+# gcc-12 / gcc-13: gate through cc-option so clang drops the flags it doesn't know
+# (e.g. -Wno-enum-int-mismatch, -Wno-stringop-overread) instead of erroring on them.
+ccflags-y += $(call cc-option,-Wno-address)
+ccflags-y += $(call cc-option,-Wframe-larger-than=1648)
+ccflags-y += $(call cc-option,-Wno-cast-function-type)
+ccflags-y += $(call cc-option,-Wno-enum-int-mismatch)
+ccflags-y += $(call cc-option,-Wno-stringop-overread)
+ccflags-y += $(call cc-option,-Wno-enum-conversion)
+ccflags-y += $(call cc-option,-Wno-int-in-bool-context)
+ccflags-y += $(call cc-option,-Wno-missing-prototypes)
+ccflags-y += $(call cc-option,-Wno-missing-declarations)
 
-# gcc-13
-ccflags-y += -Wno-enum-int-mismatch
-ccflags-y += -Wno-stringop-overread
-ccflags-y += -Wno-enum-conversion
-ccflags-y += -Wno-int-in-bool-context
-ccflags-y += -Wno-missing-prototypes
-ccflags-y += -Wno-missing-declarations
+# ponytail: vendored out-of-tree driver written against gcc; keep its own
+# warnings (header-guard typos, enum mismatches, ...) non-fatal under the
+# kernel's global -Werror instead of patching hundreds of upstream source files.
+ccflags-y += -Wno-error
 
 ccflags-y += -Wno-empty-body
 
@@ -53,7 +57,7 @@ ifeq ($(GCC_VER_49),1)
 ccflags-y += -Wno-date-time	# Fix compile error && warning on gcc 4.9 and later
 endif
 
-ccflags-y += -I$(src)/include
+ccflags-y += -I$(srctree)/$(src)/include
 
 EXTRA_LDFLAGS += --strip-debug
 
@@ -302,10 +306,10 @@ _HAL_INTFS_FILES :=	hal/hal_intf.o \
 			hal/led/hal_$(HCI_NAME)_led.o
 
 
-ccflags-y += -I$(src)/platform
+ccflags-y += -I$(srctree)/$(src)/platform
 _PLATFORM_FILES := platform/platform_ops.o
 
-ccflags-y += -I$(src)/hal/btc
+ccflags-y += -I$(srctree)/$(src)/hal/btc
 
 ########### HAL_RTL8188E #################################
 ifeq ($(CONFIG_RTL8188E), y)
@@ -2459,7 +2463,7 @@ ifeq ($(CONFIG_SDIO_HCI), y)
 rtk_core += core/rtw_sdio.o
 endif
 
-ccflags-y += -I$(src)/core/crypto
+ccflags-y += -I$(srctree)/$(src)/core/crypto
 rtk_core += \
 		core/crypto/aes-internal.o \
 		core/crypto/aes-internal-enc.o \

@@ -222,10 +222,17 @@ void android_device_destroy(struct android_uevent_opts *opts)
 	if (opts->device_id >= 0)
 		ida_free(&android_ida, opts->device_id);
 
-	android_opts = NULL;
+	if (android_opts == opts)
+		android_opts = NULL;
 	ida_destroy(&opts->function_ida);
-	device_destroy(dev->class, dev->devt);
 	spin_unlock_irqrestore(&opts_lock, flags);
+
+	/*
+	 * Not device_destroy(): every gadget's device has devt 0, so a lookup
+	 * by devt finds the oldest one, android0, whichever gadget is dropped.
+	 * Outside the lock, since unregistering a device may sleep.
+	 */
+	device_unregister(dev);
 }
 
 void __android_set_connected(struct android_uevent_opts *opts,

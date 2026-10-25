@@ -24,9 +24,8 @@ s32	rtl8812au_init_xmit_priv(_adapter *padapter)
 	HAL_DATA_TYPE	*pHalData = GET_HAL_DATA(padapter);
 
 #ifdef PLATFORM_LINUX
-	tasklet_init(&pxmitpriv->xmit_tasklet,
-		     (void(*))rtl8812au_xmit_tasklet,
-		     (unsigned long)padapter);
+	/* tasklet_setup(): the callback type must match exactly under kCFI */
+	tasklet_setup(&pxmitpriv->xmit_tasklet, rtl8812au_xmit_tasklet);
 #endif
 #ifdef CONFIG_TX_EARLY_MODE
 	pHalData->bEarlyModeEnable = padapter->registrypriv.early_mode;

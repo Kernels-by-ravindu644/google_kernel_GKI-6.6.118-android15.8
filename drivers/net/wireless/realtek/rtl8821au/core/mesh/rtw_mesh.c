@@ -2954,10 +2954,10 @@ exit:
 	return annc_cnt;
 }
 
-static void mpath_tx_tasklet_hdl(void *priv)
+static void mpath_tx_tasklet_hdl(struct tasklet_struct *t)
 {
-	_adapter *adapter = (_adapter *)priv;
-	struct rtw_mesh_info *minfo = &adapter->mesh_info;
+	struct rtw_mesh_info *minfo = from_tasklet(minfo, t, mpath_tx_tasklet);
+	_adapter *adapter = container_of(minfo, _adapter, mesh_info);
 	struct xmit_frame *xframe;
 	_list *list, *head;
 	_list tmp;
@@ -3376,9 +3376,8 @@ void rtw_mesh_init_mesh_info(_adapter *adapter)
 	rtw_mesh_pathtbl_init(adapter);
 
 	_rtw_init_queue(&minfo->mpath_tx_queue);
-	tasklet_init(&minfo->mpath_tx_tasklet
-		, (void(*))mpath_tx_tasklet_hdl
-		, (unsigned long)adapter);
+	/* tasklet_setup(): the callback type must match exactly under kCFI */
+	tasklet_setup(&minfo->mpath_tx_tasklet, mpath_tx_tasklet_hdl);
 
 	rtw_mrc_init(adapter);
 

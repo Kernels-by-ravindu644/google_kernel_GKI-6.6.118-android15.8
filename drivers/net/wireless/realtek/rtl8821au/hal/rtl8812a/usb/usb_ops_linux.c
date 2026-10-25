@@ -207,11 +207,11 @@ _exit_recvbuf2recvframe:
 }
 
 
-void rtl8812au_xmit_tasklet(void *priv)
+void rtl8812au_xmit_tasklet(struct tasklet_struct *t)
 {
 	int ret = _FALSE;
-	_adapter *padapter = (_adapter *)priv;
-	struct xmit_priv *pxmitpriv = &padapter->xmitpriv;
+	struct xmit_priv *pxmitpriv = from_tasklet(pxmitpriv, t, xmit_tasklet);
+	_adapter *padapter = container_of(pxmitpriv, _adapter, xmitpriv);
 
 	while (1) {
 		if (RTW_CANNOT_TX(padapter)) {

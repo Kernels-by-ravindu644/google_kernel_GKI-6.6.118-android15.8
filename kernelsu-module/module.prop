@@ -1,0 +1,6 @@
+id=nethunter-wifi-drivers
+name=NetHunter Wi-Fi drivers
+version=@VERSION@
+versionCode=@VERSIONCODE@
+author=ravindu644
+description=Out-of-tree USB Wi-Fi drivers (rtl8821au, mt76x0u) + firmware for the Pixel 10 Pro NetHunter kernel. Loaded at boot by service.sh in the order given in load.conf.

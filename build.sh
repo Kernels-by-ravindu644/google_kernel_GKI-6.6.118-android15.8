@@ -88,6 +88,8 @@ build_kernel(){
         INSTALL_MOD_STRIP=1 modules_install || die "modules_install failed."
     find "${SCRIPT_DIR}/dist/modules" -name '8821au.ko' | grep -q . || \
         die "Build finished but 8821au.ko was not produced."
+    find "${SCRIPT_DIR}/dist/modules" -name 'mt76x0u.ko' | grep -q . || \
+        die "Build finished but mt76x0u.ko was not produced."
     echo -e "\nModules staged under dist/modules:"
     find "${SCRIPT_DIR}/dist/modules" -name '*.ko' -printf '  %P\n'
 }
@@ -111,7 +113,49 @@ pack_bootimg(){
     cd "${SCRIPT_DIR}" && rm -rf "${workdir}"
 }
 
+# KernelSU module: kernelsu-module/ skeleton + the .ko files listed in its
+# load.conf (from dist/modules) + the firmware blobs from prebuilts/firmware.
+pack_ksu_module(){
+    local src="${SCRIPT_DIR}/kernelsu-module"
+    local stage="${SCRIPT_DIR}/out/ksu-module"
+    rm -rf "${stage}" && mkdir -p "${stage}"
+    cp -r "${src}/." "${stage}/"
+    find "${stage}" -name .gitkeep -delete
+
+    sed -e "s|@VERSION@|${RELEASE_TAG}|" -e "s|@VERSIONCODE@|${BUILD_DATE}|" \
+        -i "${stage}/module.prop"
+
+    local ko
+    for ko in $(sed -e 's/#.*//' "${src}/load.conf"); do
+        cp "$(find "${SCRIPT_DIR}/dist/modules" -name "${ko}" | head -n1)" "${stage}/modules/" 2>/dev/null || \
+            die "load.conf lists ${ko} but the build did not produce it."
+    done
+    cp -r "${SCRIPT_DIR}/prebuilts/firmware/." "${stage}/system/vendor/firmware/"
+
+    KSU_MODULE_ZIP="${SCRIPT_DIR}/dist/nethunter-wifi-drivers-${RELEASE_TAG}.zip"
+    rm -f "${KSU_MODULE_ZIP}"
+    (cd "${stage}" && zip -q -X -r "${KSU_MODULE_ZIP}" .) || die "Failed to zip the KernelSU module."
+    rm -rf "${stage}"
+}
+
+# Release zip: boot.img + the KernelSU module zip.
+pack_release(){
+    local zip="${SCRIPT_DIR}/dist/Pixel-10-Pro-KSUN-${KSU_VERSION}-NH-DS-${RELEASE_TAG}.zip"
+    rm -f "${zip}"
+    (cd "${SCRIPT_DIR}/dist" && zip -q -X "${zip}" boot.img "$(basename "${KSU_MODULE_ZIP}")") || \
+        die "Failed to create the release zip."
+    echo -e "\nRelease: ${zip}"
+    sha256sum "${zip}"
+}
+
+BUILD_DATE="$(date +%Y%m%d)"
+RELEASE_TAG="${BUILD_DATE}-$(git log -1 --pretty=%h)"
+KSU_VERSION="$(git -C "${SCRIPT_DIR}/KernelSU-Next" describe --tags --abbrev=0 2>/dev/null || echo unknown)"
+
 echo "Building kernel..." && \
     build_kernel && \
     echo "Packing boot image..." && \
-    pack_bootimg
+    pack_bootimg && \
+    echo "Packing KernelSU module..." && \
+    pack_ksu_module && \
+    pack_release

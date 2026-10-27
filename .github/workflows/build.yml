@@ -1,0 +1,54 @@
+name: Build and Release Kernel
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt update && sudo apt install -y \
+            build-essential bc bison flex patch pkg-config git curl tar xz-utils zip unzip \
+            cpio rsync kmod perl python3 python-is-python3 libssl-dev libelf-dev pahole \
+            libncurses-dev zlib1g-dev libyaml-dev lz4 zstd
+
+      # build.sh fetches clang-r510928 itself and writes dist/boot.img,
+      # dist/nethunter-wifi-drivers-<tag>.zip and the combined release zip.
+      - name: Build kernel
+        run: ./build.sh
+
+      - name: Set release tag
+        run: |
+          zip="$(ls dist/Pixel-10-Pro-KSUN-*-NH-DS-*.zip)"
+          echo "RELEASE_ZIP=${zip}" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=$(basename "${zip}" .zip | sed 's/.*-NH-DS-//')" >> "$GITHUB_ENV"
+          echo "KSU_VERSION=$(git -C KernelSU-Next describe --tags --abbrev=0)" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pixel-10-Pro-KSUN-${{ env.KSU_VERSION }}-NH-DS-${{ env.RELEASE_TAG }}
+          path: ${{ env.RELEASE_ZIP }}
+
+      - name: Create release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ env.RELEASE_TAG }}
+          name: "Kernel Release ${{ env.RELEASE_TAG }}"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          artifacts: ${{ env.RELEASE_ZIP }}
+          allowUpdates: true
+          body: "Automated build of the NetHunter kernel for the Pixel 10 Pro (blazer), from ${{ github.repository }}.\nCommit: ${{ github.sha }}\n\nThe zip carries `boot.img` and the `nethunter-wifi-drivers-*.zip` KernelSU module.\n1. `fastboot flash boot boot.img`\n2. Install the module zip from the KernelSU-Next manager and reboot. It loads rtl8821au and mt76x0u (with the MT7610U firmware) at boot and shows the loaded/failed count in its description.\n\nKernelSU-Next manager (${{ env.KSU_VERSION }}, matches the built-in driver): https://github.com/KernelSU-Next/KernelSU-Next/releases/tag/${{ env.KSU_VERSION }}"

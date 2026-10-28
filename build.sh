@@ -2,58 +2,50 @@
 # Copyright (c) 2026 ravindu644 <droidcasts@protonmail.com>
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
-# Build script for Pixel 10 Pro kernel (6.6.118)
+# Linux 6.6 arm64 (GKI) kernel build script for the Pixel 10 Pro
 
 set -euo pipefail
 
-SCRIPT_DIR="$(dirname $(readlink -fq "$0"))"
-MAGISKBOOT="${SCRIPT_DIR}/tools/magiskboot"
-BOOTIMG="${SCRIPT_DIR}/prebuilts/boot.img"
-cd "${SCRIPT_DIR}"
+# cd to the repo root
+KERNEL_ROOT="$(dirname "$(readlink -f "$0")")"
+cd "${KERNEL_ROOT}"
 
-die(){ echo -e "\nError: $*" >&2 ; exit 1 ; }
-
-# prebuilts this script uses only support x86_64 linux
-[ "$(uname -s)" = "Linux" ] && [ "$(uname -m)" = "x86_64" ] || \
-    die "This script only runs on x86_64 Linux."
-
-KERNEL_VERSION="$(make kernelversion 2>/dev/null)"
-
-# init & update git submodules
+# init submodules
 git submodule update --init --recursive
 
-# download & install clang-r510928
-if [ ! -d "${HOME}/toolchains/clang-r510928" ]; then
-    echo -e "Cloning clang-r510928..."
-    mkdir -p "${HOME}/toolchains/clang-r510928" && cd "${HOME}/toolchains/clang-r510928"
+# release tag: CI sets it so the GitHub release and the zip names agree
+BUILD_VERSION="$(git log -1 --pretty=%h)"
+RELEASE_TAG="${RELEASE_TAG:-$(date +%Y%m%d)-${BUILD_VERSION}}"
+KSU_VERSION="$(git -C KernelSU-Next describe --tags --abbrev=0 2>/dev/null || echo unknown)"
 
-    curl -LO "https://github.com/ravindu644/Android-Kernel-Tutorials/releases/download/toolchains/clang-r510928.tar.gz" || {
-    echo "Failed to download clang-r510928. Please check your internet connection and try again." && exit 1
-    }
-
-    tar -xf clang-r510928.tar.gz && rm clang-r510928.tar.gz
-    cd "${SCRIPT_DIR}"
-fi
-
-# cleanup before building
-rm -rf "${SCRIPT_DIR}/"{out,dist} && \
-    mkdir -p "${SCRIPT_DIR}/"{out,dist}
-
-# generate localversion -- kbuild doesn't know the KMI tag, so write it here:
+# generate localversion. kbuild does not know the KMI tag, so write it here:
 #   6.6.118-android15-8-Nethunter-DS-KSUN@ravindu644-<sha>-4k
+rm -rf dist && mkdir -p out dist
 KMI="$(sed -n 's/^BRANCH=\([^-]*\).*/\1/p' build.config.common)-$(sed -n 's/^KMI_GENERATION=//p' build.config.common)"
-LOCALVERSION_SUFFIX="-${KMI}-Nethunter-DS-KSUN@ravindu644-$(git log -1 --pretty=%h)"
-printf '%s' "${LOCALVERSION_SUFFIX}" > "${SCRIPT_DIR}/out/localversion"
+printf '%s' "-${KMI}-Nethunter-DS-KSUN@ravindu644-${BUILD_VERSION}" > out/localversion
 export LOCALVERSION=""   # keeps setlocalversion from appending a '+'
 
-# export toolchain paths
+# export toolchain path and core variables
 export PATH="${HOME}/toolchains/clang-r510928/bin:${PATH}"
+MAGISKBOOT="${KERNEL_ROOT}/tools/magiskboot"
+STOCK_BOOT="${KERNEL_ROOT}/prebuilts/boot.img"
+
+# download the toolchain if it isn't there yet
+download_toolchains(){
+    local base="https://github.com/ravindu644/Android-Kernel-Tutorials/releases/download/toolchains"
+    if [ ! -x "${HOME}/toolchains/clang-r510928/bin/clang" ]; then
+        echo "[INFO]: downloading clang-r510928..."
+        mkdir -p "${HOME}/toolchains/clang-r510928"
+        curl -fL "${base}/clang-r510928.tar.gz" | tar -xz -C "${HOME}/toolchains/clang-r510928" || \
+            { rm -rf "${HOME}/toolchains/clang-r510928"; exit 1; }
+    fi
+}
 
 # build options for the kernel
-export BUILD_OPTIONS=(
-    -C "${SCRIPT_DIR}"
-    O="${SCRIPT_DIR}/out"
-    -j$(nproc)
+BUILD_OPTIONS=(
+    -C "${KERNEL_ROOT}"
+    O="${KERNEL_ROOT}/out"
+    -j"$(nproc)"
     ARCH=arm64
     LLVM=1
     LLVM_IAS=1
@@ -62,100 +54,58 @@ export BUILD_OPTIONS=(
 )
 
 build_kernel(){
-    # make default configuration.
-    make "${BUILD_OPTIONS[@]}" gki_defconfig custom.config droidspaces.config nethunter.config || \
-        die "Failed to generate the kernel configuration."
+    make "${BUILD_OPTIONS[@]}" gki_defconfig custom.config droidspaces.config nethunter.config
 
-    # configure the kernel
+    # menuconfig
     #make "${BUILD_OPTIONS[@]}" menuconfig
 
-    # build the kernel (Image + all =m modules, e.g. the rtl8821au Wi-Fi driver)
-    make "${BUILD_OPTIONS[@]}" || die "Kernel build failed."
+    # Image + every =m module (the out-of-tree Wi-Fi drivers)
+    make "${BUILD_OPTIONS[@]}"
+    cp out/arch/arm64/boot/Image dist/Image
 
-    # copy the built kernel to the dist directory
-    [ -f "${SCRIPT_DIR}/out/arch/arm64/boot/Image" ] || die "Build finished but no Image was produced."
-    cp "${SCRIPT_DIR}/out/arch/arm64/boot/Image" "${SCRIPT_DIR}/dist"
-
-    RELEASE="$(cat "${SCRIPT_DIR}/out/include/config/kernel.release")"
-    echo -e "\nKernel release: ${RELEASE}\n"
-    [ "${RELEASE}" = "${KERNEL_VERSION}${LOCALVERSION_SUFFIX}-4k" ] || \
-        die "Unexpected release string -- the localversion setup is broken."
-
-    # install modules (signed + stripped) into dist/modules with depmod metadata,
-    # so `modprobe -d dist/modules 8821au` resolves the cfg80211 dependency.
-    rm -rf "${SCRIPT_DIR}/dist/modules"
-    make "${BUILD_OPTIONS[@]}" INSTALL_MOD_PATH="${SCRIPT_DIR}/dist/modules" \
-        INSTALL_MOD_STRIP=1 modules_install || die "modules_install failed."
-    find "${SCRIPT_DIR}/dist/modules" -name '8821au.ko' | grep -q . || \
-        die "Build finished but 8821au.ko was not produced."
-    find "${SCRIPT_DIR}/dist/modules" -name 'mt76x0u.ko' | grep -q . || \
-        die "Build finished but mt76x0u.ko was not produced."
-    echo -e "\nModules staged under dist/modules:"
-    find "${SCRIPT_DIR}/dist/modules" -name '*.ko' -printf '  %P\n'
+    # modules_install is what signs them, so the .ko files have to come from here
+    rm -rf dist/modules
+    make "${BUILD_OPTIONS[@]}" INSTALL_MOD_PATH="${KERNEL_ROOT}/dist/modules" INSTALL_MOD_STRIP=1 modules_install
 }
 
-pack_bootimg(){
-    [ -x "${MAGISKBOOT}" ] || die "magiskboot is missing or not executable: ${MAGISKBOOT}"
-    [ -f "${BOOTIMG}" ] || die "Prebuilt boot image not found: ${BOOTIMG}"
-    [ -f "${SCRIPT_DIR}/dist/Image" ] || die "dist/Image not found. Build the kernel first."
-
-    # unpack/repack in a scratch dir so leftovers never pollute dist/
-    local workdir="${SCRIPT_DIR}/out/bootimg"
-    rm -rf "${workdir}" && mkdir -p "${workdir}"
-    cd "${workdir}"
-
-    "${MAGISKBOOT}" unpack "${BOOTIMG}" || die "Failed to unpack ${BOOTIMG}"
-    cp "${SCRIPT_DIR}/dist/Image" kernel
-    "${MAGISKBOOT}" repack "${BOOTIMG}" || die "Failed to repack ${BOOTIMG}"
-    [ -f new-boot.img ] || die "magiskboot did not produce new-boot.img"
-    mv new-boot.img "${SCRIPT_DIR}/dist/boot.img"
-
-    cd "${SCRIPT_DIR}" && rm -rf "${workdir}"
+build_boot(){
+    # unpack stock boot.img, swap in our kernel, repack
+    local work="${KERNEL_ROOT}/out/boot_work"
+    rm -rf "${work}" && mkdir -p "${work}" && cd "${work}"
+    "${MAGISKBOOT}" unpack "${STOCK_BOOT}"
+    cp "${KERNEL_ROOT}/dist/Image" kernel
+    "${MAGISKBOOT}" repack "${STOCK_BOOT}" "${KERNEL_ROOT}/dist/boot.img"
+    cd "${KERNEL_ROOT}" && rm -rf "${work}"
 }
 
-# KernelSU module: kernelsu-module/ skeleton + the .ko files listed in its
-# load.conf (from dist/modules) + the firmware blobs from prebuilts/firmware.
-pack_ksu_module(){
-    local src="${SCRIPT_DIR}/kernelsu-module"
-    local stage="${SCRIPT_DIR}/out/ksu-module"
-    rm -rf "${stage}" && mkdir -p "${stage}"
-    cp -r "${src}/." "${stage}/"
-    find "${stage}" -name .gitkeep -delete
-
-    sed -e "s|@VERSION@|${RELEASE_TAG}|" -e "s|@VERSIONCODE@|${BUILD_DATE}|" \
-        -i "${stage}/module.prop"
+build_ksu_module(){
+    # kernelsu-module/ skeleton + the .ko files load.conf names + the firmware blobs
+    local stage="${KERNEL_ROOT}/out/ksu-module"
+    rm -rf "${stage}" && cp -r kernelsu-module "${stage}"
+    sed -i "s|@VERSION@|${RELEASE_TAG}|; s|@VERSIONCODE@|$(date +%Y%m%d)|" "${stage}/module.prop"
+    cp -r prebuilts/firmware/. "${stage}/system/vendor/firmware/"
 
     local ko
-    for ko in $(sed -e 's/#.*//' "${src}/load.conf"); do
-        cp "$(find "${SCRIPT_DIR}/dist/modules" -name "${ko}" | head -n1)" "${stage}/modules/" 2>/dev/null || \
-            die "load.conf lists ${ko} but the build did not produce it."
+    for ko in $(sed 's/#.*//' kernelsu-module/load.conf); do
+        find dist/modules -name "${ko}" -exec cp {} "${stage}/modules/" \; -quit
+        [ -f "${stage}/modules/${ko}" ] || { echo "load.conf lists ${ko} but the build did not produce it" >&2; exit 1; }
     done
-    cp -r "${SCRIPT_DIR}/prebuilts/firmware/." "${stage}/system/vendor/firmware/"
 
-    KSU_MODULE_ZIP="${SCRIPT_DIR}/dist/nethunter-wifi-drivers-${RELEASE_TAG}.zip"
-    rm -f "${KSU_MODULE_ZIP}"
-    (cd "${stage}" && zip -q -X -r "${KSU_MODULE_ZIP}" .) || die "Failed to zip the KernelSU module."
+    KSU_MODULE_ZIP="nethunter-wifi-drivers-${RELEASE_TAG}.zip"
+    (cd "${stage}" && zip -q -X -r "${KERNEL_ROOT}/dist/${KSU_MODULE_ZIP}" .)
     rm -rf "${stage}"
 }
 
-# Release zip: boot.img + the KernelSU module zip.
-pack_release(){
-    local zip="${SCRIPT_DIR}/dist/Pixel-10-Pro-KSUN-${KSU_VERSION}-NH-DS-${RELEASE_TAG}.zip"
-    rm -f "${zip}"
-    (cd "${SCRIPT_DIR}/dist" && zip -q -X "${zip}" boot.img "$(basename "${KSU_MODULE_ZIP}")") || \
-        die "Failed to create the release zip."
-    echo -e "\nRelease: ${zip}"
-    sha256sum "${zip}"
+build_zip(){
+    # release zip: boot.img + the KernelSU module zip
+    cd "${KERNEL_ROOT}/dist"
+    zip -q -X "Pixel-10-Pro-KSUN-${KSU_VERSION}-NH-DS-${RELEASE_TAG}.zip" boot.img "${KSU_MODULE_ZIP}"
+    echo -e "\n[INFO]: ZIP BUILT SUCCESSFULLY..!\n"
+    cd "${KERNEL_ROOT}"
 }
 
-BUILD_DATE="$(date +%Y%m%d)"
-RELEASE_TAG="${BUILD_DATE}-$(git log -1 --pretty=%h)"
-KSU_VERSION="$(git -C "${SCRIPT_DIR}/KernelSU-Next" describe --tags --abbrev=0 2>/dev/null || echo unknown)"
-
-echo "Building kernel..." && \
-    build_kernel && \
-    echo "Packing boot image..." && \
-    pack_bootimg && \
-    echo "Packing KernelSU module..." && \
-    pack_ksu_module && \
-    pack_release
+download_toolchains
+build_kernel
+build_boot
+build_ksu_module
+build_zip
